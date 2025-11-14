@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pdf2image
+pillow
+services:
+  - type: web
+    name: rudy-goat-api
+    env: docker
+    plan: free
+    buildCommand: ""
