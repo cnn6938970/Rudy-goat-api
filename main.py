@@ -1,14 +1,13 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-import zipfile
-import re
-import io
+from fastapi.responses import StreamingResponse
+import io, zipfile
 from pdf2image import convert_from_bytes
+import pytesseract
+import re
 
 app = FastAPI()
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,36 +15,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def extract_emp_id(text):
-    match = re.search(r"F[A-Z]?\d{3}", text)
-    return match.group(0) if match else None
+pattern = re.compile(r"F[A-Z0-9][0-9]{3}")
 
 @app.post("/split")
-async def split_pdf(file: UploadFile = File(...)):
+async def split(file: UploadFile = File(...)):
     pdf_bytes = await file.read()
-
     images = convert_from_bytes(pdf_bytes)
-    zip_buffer = io.BytesIO()
-    zipf = zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED)
 
-    for i, img in enumerate(images, 1):
-        page_bytes = io.BytesIO()
-        img.save(page_bytes, format="PNG")
-        page_bytes.seek(0)
+    mem_zip = io.BytesIO()
+    with zipfile.ZipFile(mem_zip, "w") as z:
+        for idx, img in enumerate(images):
+            text = pytesseract.image_to_string(img)
+            match = pattern.search(text)
+            name = match.group() if match else f"page_{idx+1}"
+            buf = io.BytesIO()
+            img.save(buf, format="PDF")
+            z.writestr(f"{name}.pdf", buf.getvalue())
 
-        text = ""  # 你可以加 OCR
-        emp_id = extract_emp_id(text) or f"page_{i:02d}"
-
-        zipf.writestr(f"{emp_id}.png", page_bytes.getvalue())
-
-    zipf.close()
-    zip_buffer.seek(0)
-
-    return {
-        "status": "ok",
-        "message": "split done",
-    }
-
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    mem_zip.seek(0)
+    return StreamingResponse(mem_zip, media_type="application/zip",
+                             headers={"Content-Disposition": "attachment; filename=split_output.zip"})
