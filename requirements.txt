@@ -1,7 +1,6 @@
 fastapi
 uvicorn
-python-multipart
+pytesseract
 pdf2image
-pillow
-PyMuPDF
-reportlab
+python-multipart
+Pillow
