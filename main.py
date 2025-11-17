@@ -1,37 +1,38 @@
 from fastapi import FastAPI, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import io, zipfile
+import zipfile, io
 from pdf2image import convert_from_bytes
-import pytesseract
+import fitz
 import re
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+pattern = re.compile(r"F[A-Za-z0-9]\d{3}")
 
-pattern = re.compile(r"F[A-Z0-9][0-9]{3}")
+def find_code(text):
+    m = pattern.findall(text)
+    return m[-1] if m else None
 
 @app.post("/split")
 async def split(file: UploadFile = File(...)):
-    pdf_bytes = await file.read()
-    images = convert_from_bytes(pdf_bytes)
+    data = await file.read()
+
+    images = convert_from_bytes(data, dpi=200)
+    pdf_doc = fitz.open("pdf", data)
 
     mem_zip = io.BytesIO()
-    with zipfile.ZipFile(mem_zip, "w") as z:
-        for idx, img in enumerate(images):
-            text = pytesseract.image_to_string(img)
-            match = pattern.search(text)
-            name = match.group() if match else f"page_{idx+1}"
-            buf = io.BytesIO()
-            img.save(buf, format="PDF")
-            z.writestr(f"{name}.pdf", buf.getvalue())
+    z = zipfile.ZipFile(mem_zip, "w", zipfile.ZIP_DEFLATED)
 
+    for i, img in enumerate(images):
+        page = pdf_doc.load_page(i)
+        text = page.get_text()
+        code = find_code(text) or f"page_{i+1:02d}"
+
+        out = io.BytesIO()
+        img.save(out, format="PDF")
+        z.writestr(f"{code}.pdf", out.getvalue())
+
+    z.close()
     mem_zip.seek(0)
     return StreamingResponse(mem_zip, media_type="application/zip",
-                             headers={"Content-Disposition": "attachment; filename=split_output.zip"})
+        headers={"Content-Disposition": "attachment; filename=split_output.zip"})
